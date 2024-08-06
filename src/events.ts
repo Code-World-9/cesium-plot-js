@@ -7,9 +7,12 @@ export default class EventDispatcher {
     this.listeners = new Map([
       ['drawStart', new Set()],
       ['drawUpdate', new Set()],
+      ['rotationUpdate', new Set()],
       ['drawEnd', new Set()],
       ['editStart', new Set()],
       ['editEnd', new Set()],
+      ['onTagClick', new Set()],
+      ['onTagDBClick', new Set()],
     ]);
   }
 

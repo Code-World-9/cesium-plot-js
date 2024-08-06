@@ -10,6 +10,8 @@ export default class Tag extends Base {
     this.cesium = cesium;
     this.setState('drawing');
     this.onMouseMove();
+    this.onDoubleClick();
+    this.onRightClick();
   }
   getType(): Shape {
     return 'tag';
@@ -21,7 +23,18 @@ export default class Tag extends Base {
     this.setGeometryPoints([cartesian]);
     this.drawTag();
   }
-
+  onDoubleClick() {
+    const dbHandler = new this.cesium.ScreenSpaceEventHandler(this.viewer.canvas);
+    dbHandler.setInputAction((evt: any) => {
+      const pickedObject = this.viewer.scene.pick(evt.position);
+      const hitEntities = this.cesium.defined(pickedObject) && pickedObject.id instanceof this.cesium.Entity;
+      console.log('dbclick', pickedObject, this.state);
+      // 标签点击事件
+      if (hitEntities) {
+        this.eventDispatcher.dispatchEvent('onTagDBClick', pickedObject);
+      }
+    }, this.cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
+  }
   onClick() {
     this.eventHandler = new this.cesium.ScreenSpaceEventHandler(this.viewer.canvas);
     this.eventHandler.setInputAction((evt: any) => {
@@ -29,10 +42,10 @@ export default class Tag extends Base {
       const hitEntities = this.cesium.defined(pickedObject) && pickedObject.id instanceof this.cesium.Entity;
       const activeEntity = this.tagEntity;
       if (this.state === 'drawing') {
-        this.finishDrawing();
+        // this.finishDrawing();
       } else if (this.state === 'edit') {
         if (!hitEntities || activeEntity.id !== pickedObject.id.id) {
-          this.tagEntity.billboard.image = this.style.image;
+          // this.tagEntity.billboard.image = this.style.image;
           this.setState('static');
           this.removeControlPoints();
           this.disableDrag();
@@ -40,13 +53,26 @@ export default class Tag extends Base {
         }
       } else if (this.state === 'static') {
         if (hitEntities && activeEntity.id === pickedObject.id.id) {
-          this.tagEntity.billboard.image = this.style.activeImage;
+          // this.tagEntity.billboard.image = this.style.activeImage;
           this.setState('edit');
           this.draggable();
           this.eventDispatcher.dispatchEvent('editStart');
         }
       }
+      // 标签点击事件
+      if (hitEntities) {
+        this.eventDispatcher.dispatchEvent('onTagClick', pickedObject);
+      }
     }, this.cesium.ScreenSpaceEventType.LEFT_CLICK);
+  }
+  onRightClick() {
+    const eventHandler = new this.cesium.ScreenSpaceEventHandler(this.viewer.canvas);
+    eventHandler.setInputAction(() => {
+      console.log(666666666666)
+      if (this.state === 'drawing') {
+        this.finishDrawing();
+      }
+    }, this.cesium.ScreenSpaceEventType.RIGHT_CLICK);
   }
 
   draggable() {
@@ -67,7 +93,6 @@ export default class Tag extends Base {
     }, this.cesium.ScreenSpaceEventType.LEFT_DOWN);
     this.dragEventHandler.setInputAction((event: any) => {
       if (dragging) {
-        console.log(666, event);
         const cartesian = this.pixelToCartesian(event.endPosition);
         console.log(cartesian, this.state);
         this.tagEntity.position = cartesian;
@@ -81,5 +106,8 @@ export default class Tag extends Base {
   /**
    * tag not need to add control points
    */
-  addControlPoints() { }
+  addControlPoints() {}
+  getPoints() {
+    return this.points;
+  }
 }

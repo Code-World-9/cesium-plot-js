@@ -10,7 +10,7 @@ import {
   EventListener,
   VisibleAnimationOpts,
   GrowthAnimationOpts,
-  Shape
+  Shape,
 } from './interface';
 import EventDispatcher from './events';
 import cloneDeep from 'lodash.clonedeep';
@@ -25,10 +25,13 @@ export default class Base {
   eventHandler: CesiumTypeOnly.ScreenSpaceEventHandler;
   polygonEntity: CesiumTypeOnly.Entity;
   tagEntity: CesiumTypeOnly.Entity;
+  imageEntity: CesiumTypeOnly.Entity;
   geometryPoints: CesiumTypeOnly.Cartesian3[] = [];
   state: State = 'drawing';
   controlPoints: CesiumTypeOnly.EntityCollection = [];
+  rotationPoint: CesiumTypeOnly.Entity;
   controlPointsEventHandler: CesiumTypeOnly.ScreenSpaceEventHandler;
+  rotationEventHandler: CesiumTypeOnly.ScreenSpaceEventHandler;
   lineEntity: CesiumTypeOnly.Entity;
   type!: Shape;
   freehand!: boolean;
@@ -59,15 +62,9 @@ export default class Base {
   }
 
   mergeStyle(style: GeometryStyle | undefined) {
+    // TODO 配置默认样式
     if (this.type === 'polygon') {
-      this.style = Object.assign(
-        {
-          material: new this.cesium.Color(),
-          outlineMaterial: new this.cesium.Color(),
-          outlineWidth: 2,
-        },
-        style,
-      );
+      this.style = Object.assign({}, style);
     } else if (this.type === 'line') {
       this.style = Object.assign(
         {
@@ -76,17 +73,12 @@ export default class Base {
         },
         style,
       );
-    }else if(this.type === 'tag') {
-      this.style = Object.assign(
-        {
-          image: TagDefault,
-          activeImage: TagActive,
-          width: 32,
-          height: 32,
-        },
-        style,
-      );
+    } else if (this.type === 'tag') {
+      this.style = Object.assign({}, style);
+    } else if (this.type === 'image') {
+      this.style = Object.assign({}, style);
     }
+
     //Cache the initial settings to avoid modification of properties due to reference type assignment.
     this.styleCache = cloneDeep(this.style);
   }
@@ -118,7 +110,6 @@ export default class Base {
       if (this.type === 'line') {
         activeEntity = this.lineEntity;
       }
-
       if (this.state === 'drawing') {
         // In the drawing state, the points clicked are key nodes of the shape, and they are saved in this.points.
         const cartesian = this.pixelToCartesian(evt.position);
@@ -171,7 +162,9 @@ export default class Base {
       if (!cartesian) {
         return;
       }
-      if (this.checkDistance(cartesian, points[points.length - 1])) {
+      if (this.getType() === 'tag') {
+        this.updateMovingPoint(cartesian, points.length);
+      } else if (this.checkDistance(cartesian, points[points.length - 1])) {
         // Synchronize data to subclasses.If the distance is less than 10 meters, do not proceed
         this.updateMovingPoint(cartesian, points.length);
       }
@@ -186,6 +179,9 @@ export default class Base {
     }, this.cesium.ScreenSpaceEventType.LEFT_DOUBLE_CLICK);
   }
 
+  onRightClick(){
+    
+  }
   /**
    * Check if the distance between two points is greater than 10 meters.
    */
@@ -204,7 +200,7 @@ export default class Base {
     this.setState('edit');
     this.addControlPoints();
     this.draggable();
-    const entity = this.polygonEntity || this.lineEntity || this.tagEntity;
+    const entity = this.polygonEntity || this.lineEntity || this.tagEntity || this.imageEntity;
     this.entityId = entity.id;
     /**
      * "I've noticed that CallbackProperty can lead to significant performance issues.
@@ -223,6 +219,9 @@ export default class Base {
     // } else if (this.type === 'line') {
     //   this.lineEntity.polyline.positions = this.geometryPoints;
     // }
+    if (this.points.length !== this.geometryPoints.length) {
+      this.setGeometryPoints(this.points);
+    }
 
     this.eventDispatcher.dispatchEvent('drawEnd', this.getPoints());
   }
@@ -256,39 +255,75 @@ export default class Base {
       this.polygonEntity = this.viewer.entities.add({
         polygon: new this.cesium.PolygonGraphics({
           hierarchy: new this.cesium.CallbackProperty(callback, false),
-          show: true,
-          material: style.material,
+          show: style.shade_switch === undefined ? true : style.shade_switch,
+          material: this.cesium.Color.fromCssColorString(style.fill?.color || 'rgba(59, 178, 208, 0.5)'),
+          fill: style.fill?.is_show === undefined ? true : style.fill.is_show,
+          outline: style.sideline?.is_show === undefined ? true : style.sideline.is_show,
+          outlineColor: this.cesium.Color.fromCssColorString(style.sideline?.color || 'rgba(59, 178, 208, 1)'),
+          outlineWidth: style.sideline?.width,
+          height: 0,
         }),
       });
 
       // Due to limitations in PolygonGraphics outlining, a separate line style is drawn.
-      this.outlineEntity = this.viewer.entities.add({
-        polyline: {
-          positions: new this.cesium.CallbackProperty(() => {
-            return [...this.geometryPoints, this.geometryPoints[0]];
-          }, false),
-          width: style.outlineWidth,
-          material: style.outlineMaterial,
-          clampToGround: true,
-        },
-      });
+      // this.outlineEntity = this.viewer.entities.add({
+      //   polyline: {
+      //     positions: new this.cesium.CallbackProperty(() => {
+      //       return [...this.geometryPoints, this.geometryPoints[0]];
+      //     }, false),
+      //     width: style.outlineWidth,
+      //     material: style.outlineMaterial,
+      //     clampToGround: true,
+      //   },
+      // });
     }
   }
 
   drawTag() {
     const style = this.style as TagStyle;
     if (!this.tagEntity) {
+      const baseOffsetY = -style.icon.height - (style.title.font_size || 12) / 2;
       this.tagEntity = this.viewer.entities.add({
         position: this.geometryPoints[0],
         billboard: {
-          image: style.image,
-          width: style.width,
-          height: style.height,
-        }
+          image: style.icon.image,
+          width: style.icon.width,
+          height: style.icon.height,
+          // disableDepthTestDistance: Number.POSITIVE_INFINITY, // 关闭深度测试
+          // color: style.icon.bg_color
+          //   ? this.cesium.Color.fromCssColorString(style.icon.bg_color)
+          //   : this.cesium.Color.WHITE,
+          distanceDisplayCondition: new this.cesium.DistanceDisplayCondition(
+            style.icon.range_min || 0,
+            style.icon.range_max || 1000000000,
+          ),
+          pixelOffset: new this.cesium.Cartesian2(0, -style.icon.height / 2),
+        },
+        label: new this.cesium.LabelGraphics({
+          show: !style.title.no_visible,
+          text: style.title?.text || '',
+          font: `${style.title.font_size || 12}px sans-serif`,
+          fillColor: this.cesium.Color.fromCssColorString(style.title.font_color || '#000000'),
+          showBackground: !!style.title.show_bg,
+          backgroundColor: this.cesium.Color.fromCssColorString(style.title.bg_color || '#ffffff'),
+          backgroundPadding: new this.cesium.Cartesian2(10, 5),
+          pixelOffset: style.title.offset
+            ? new this.cesium.Cartesian2(style.title.offset[0], baseOffsetY - style.title.offset[1])
+            : new this.cesium.Cartesian2(0, baseOffsetY),
+          style: this.cesium.LabelStyle.FILL,
+          // outlineColor: this.cesium.Color.BLACK,
+          // outlineWidth: 2,
+          disableDepthTestDistance: Number.POSITIVE_INFINITY, // 关闭深度测试
+          distanceDisplayCondition: new this.cesium.DistanceDisplayCondition(
+            style.title.range_min || 0,
+            style.title.range_max || 1000000000,
+          ),
+        }),
       });
     } else {
       this.tagEntity.position = this.geometryPoints[0];
     }
+    this.points = this.geometryPoints;
   }
 
   drawLine() {
@@ -347,18 +382,12 @@ export default class Base {
   addControlPoints() {
     const points = this.getPoints();
     this.controlPoints = points.map((position) => {
-      // return this.viewer.entities.add({
-      //   position,
-      //   billboard: {
-      //     image: './src/assets/circle_red.png',
-      //   },
-      // });
-
       return this.viewer.entities.add({
         position,
         point: {
           pixelSize: 10,
-          heightReference: this.cesium.HeightReference.CLAMP_TO_GROUND,
+          // heightReference: this.cesium.HeightReference.CLAMP_TO_GROUND,
+          heightReference: 0,
           color: this.cesium.Color.RED,
         },
       });
@@ -411,6 +440,7 @@ export default class Base {
       draggedIcon = null;
       this.viewer.scene.screenSpaceCameraController.enableRotate = true;
     }, this.cesium.ScreenSpaceEventType.LEFT_UP);
+    if (this.type === 'image') this.addRotationControl();
   }
 
   removeControlPoints() {
@@ -422,6 +452,7 @@ export default class Base {
       this.controlPointsEventHandler.removeInputAction(this.cesium.ScreenSpaceEventType.MOUSE_MOVE);
       this.controlPointsEventHandler.removeInputAction(this.cesium.ScreenSpaceEventType.LEFT_UP);
     }
+    this.removeRotationControl();
   }
 
   /**
@@ -474,10 +505,22 @@ export default class Base {
           this.setGeometryPoints(newPoints);
           if (this.minPointsForShape === 4) {
             // 双箭头在整体被拖拽时，需要同步更新生长动画的插值点
-            this.curveControlPointLeft = this.cesium.Cartesian3.add(this.curveControlPointLeft, translation, new this.cesium.Cartesian3());
-            this.curveControlPointRight = this.cesium.Cartesian3.add(this.curveControlPointRight, translation, new this.cesium.Cartesian3());
+            this.curveControlPointLeft = this.cesium.Cartesian3.add(
+              this.curveControlPointLeft,
+              translation,
+              new this.cesium.Cartesian3(),
+            );
+            this.curveControlPointRight = this.cesium.Cartesian3.add(
+              this.curveControlPointRight,
+              translation,
+              new this.cesium.Cartesian3(),
+            );
           }
           startPosition = newPosition;
+          if (this.type === 'image') {
+            this.updateRotationPoint();
+            this.eventDispatcher.dispatchEvent('drawUpdate', this.getPoints());
+          }
         }
       } else {
         const pickRay = this.viewer.scene.camera.getPickRay(event.endPosition);
@@ -858,6 +901,9 @@ export default class Base {
       if (this.points.length <= 2) this.removeTempLine();
     } else if (this.type === 'line') {
       this.viewer.entities.remove(this.lineEntity);
+    } else if (this.type === 'tag') {
+      this.viewer.entities.remove(this.tagEntity);
+      this.tagEntity = null;
     }
     this.removeClickListener();
     this.removeMoveListener();
@@ -881,6 +927,12 @@ export default class Base {
   addPoint(cartesian: CesiumTypeOnly.Cartesian3) {
     //Abstract method that must be implemented by subclasses.
   }
+  addRotationControl() {
+    //Abstract method that must be implemented by subclasses.
+  }
+  removeRotationControl() {
+    //Abstract method that must be implemented by subclasses.
+  }
 
   getPoints(): CesiumTypeOnly.Cartesian3[] {
     //Abstract method that must be implemented by subclasses.
@@ -892,6 +944,10 @@ export default class Base {
   }
 
   updateDraggingPoint(cartesian: CesiumTypeOnly.Cartesian3, index: number) {
+    //Abstract method that must be implemented by subclasses.
+  }
+
+  updateRotationPoint() {
     //Abstract method that must be implemented by subclasses.
   }
 

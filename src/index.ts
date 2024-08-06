@@ -18,6 +18,7 @@ import Polygon from './polygon/polygon';
 import Circle from './polygon/circle';
 import Sector from './polygon/sector';
 import Tag from './tag/tag';
+import Image from './polygon/image';
 
 import { GeometryStyle } from './interface';
 import * as CesiumTypeOnly from 'cesium';
@@ -43,6 +44,7 @@ const CesiumPlot: any = {
   Circle,
   Sector,
   Tag,
+  Image
 };
 
 type CreateGeometryFromDataOpts = {
